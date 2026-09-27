@@ -1,0 +1,18 @@
+# 六点盲文排版台 — 一条命令启动：
+#   docker compose up --build
+# 访问 http://localhost:8000
+
+services:
+  braille-desk:
+    build: .
+    image: braille-desk:latest
+    container_name: braille-desk
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).status==200 else 1)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

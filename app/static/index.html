@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>六点盲文排版台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="site-header">
+  <h1>六点盲文排版台</h1>
+  <p class="subtitle">英语一级（Grade 1）六点盲文 · 转写排版 ↔ 识读还原 · 双面点阵避让 · 压印点位复核 · 完全离线运行</p>
+</header>
+
+<main>
+  <nav class="tabs" aria-label="视图切换">
+    <button type="button" class="tab active" data-view="typeset">盲文排版</button>
+    <button type="button" class="tab" data-view="decode">盲文识读</button>
+    <button type="button" class="tab" data-view="avoid">双面避让</button>
+    <button type="button" class="tab" data-view="inspect">压印复核</button>
+  </nav>
+
+  <div id="view-typeset" class="view">
+    <section class="panel input-panel">
+      <div class="panel-head">
+        <h2>① 输入原文</h2>
+        <span class="counter"><span id="charCount">0</span> / 500</span>
+      </div>
+      <textarea id="srcInput" rows="6" maxlength="500" spellcheck="false"
+        placeholder="仅可输入 ASCII 字母、数字、空格与换行；换行＝硬分段；连续空格合并为一个词间格；每个词只能全为字母或全为数字。"></textarea>
+
+      <div class="controls">
+        <label class="width-label">每行格数
+          <input type="number" id="widthInput" min="10" max="40" step="1" value="20">
+          <span class="hint">10～40</span>
+        </label>
+        <div class="buttons">
+          <button type="button" id="btnTypeset" class="primary">排版（Ctrl+Enter）</button>
+          <button type="button" id="btnSample">示例</button>
+          <button type="button" id="btnClear">清空</button>
+        </div>
+      </div>
+
+      <div id="errorBox" class="error-box" hidden></div>
+    </section>
+
+    <section class="panel result-panel" id="resultPanel" hidden>
+      <div class="panel-head">
+        <h2>② 原文与盲文对照</h2>
+        <div class="buttons">
+          <button type="button" id="btnDownload">下载 Unicode 盲文文本 (.txt)</button>
+          <button type="button" id="btnCopy">复制盲文文本</button>
+        </div>
+      </div>
+
+      <div class="stats" id="statsBar"></div>
+
+      <div class="legend">
+        <span class="legend-item"><i class="sw sw-char"></i>字符格</span>
+        <span class="legend-item"><i class="sw sw-capital"></i>大写标记（点 6）</span>
+        <span class="legend-item"><i class="sw sw-number"></i>数字标记（点 3456）</span>
+        <span class="legend-item"><i class="sw sw-hyphen"></i>连字符（点 36）</span>
+        <span class="legend-item"><i class="sw sw-space"></i>词间格（占 1 格）</span>
+      </div>
+
+      <div id="linesContainer" class="lines"></div>
+    </section>
+
+    <section class="panel rules">
+      <h2>规则说明</h2>
+      <ul>
+        <li>点位编号：左列自上而下为 <b>1·2·3</b>，右列为 <b>4·5·6</b>。</li>
+        <li>大写字母前逐个加 <b>点 6</b> 标记；数字词以 <b>点 3456</b> 标记开头，1～9、0 分别借用 a～i、j 的点位；数字词续行时重加数字标记。</li>
+        <li>词间格占 1 格；行首、行尾不留空格；普通词不可拆行，仅超宽词可在字符间断开，断词行尾加 <b>点 36</b> 连字符。</li>
+        <li>动态规划依次最小化：<b>断词次数 → 行数 → 各行剩余格数平方和</b>；同分时取断点序列字典序最小者。</li>
+      </ul>
+    </section>
+  </div>
+
+  <div id="view-decode" class="view" hidden>
+    <section class="panel input-panel">
+      <div class="panel-head">
+        <h2>① 粘贴盲文</h2>
+        <span class="counter"><span id="decCellCount">0</span> / 500 格</span>
+      </div>
+      <textarea id="decInput" class="braille-input" rows="6" spellcheck="false"
+        placeholder="粘贴 Unicode 六点盲文（U+2800 区段），允许盲文空格 ⠀ 与换行，不超过 500 格。⠠ 大写紧随的一个字母；⠼ 起数字；⠤ 仅作行尾断词标记。"></textarea>
+
+      <div class="controls">
+        <span class="hint">普通换行保留；⠤＋换行 接续同一词；数字词续行须以 ⠼ 重新起始</span>
+        <div class="buttons">
+          <button type="button" id="btnDecode" class="primary">识读（Ctrl+Enter）</button>
+          <button type="button" id="btnDecSample">示例</button>
+          <button type="button" id="btnDecClear">清空</button>
+        </div>
+      </div>
+
+      <div id="decErrorBox" class="error-box" hidden></div>
+    </section>
+
+    <section class="panel result-panel" id="decResultPanel" hidden>
+      <div class="panel-head">
+        <h2>② 识读结果</h2>
+        <div class="buttons">
+          <button type="button" id="btnDecCopy">复制结果</button>
+        </div>
+      </div>
+
+      <div class="stats" id="decStatsBar"></div>
+
+      <pre id="decOutput" class="decode-output"></pre>
+    </section>
+
+    <section class="panel rules">
+      <h2>识读规则</h2>
+      <ul>
+        <li>仅接受 Unicode 六点盲文、盲文空格（U+2800）与换行，不超过 <b>500 格</b>；普通换行原样保留。</li>
+        <li><b>⠠（点 6）</b>只把紧随的一个字母转为大写；<b>⠼（点 3456）</b>使后续 a～i、j 点位分别读作 1～9、0，数字状态到词间格或普通换行结束。</li>
+        <li><b>⠤（点 36）</b>仅作行尾断词标记：去掉该格及其后的换行并接续同一词；数字词续行须以 <b>⠼</b> 重新起始。</li>
+        <li>孤立标记、未定义点位、行内连字符与不合法的数字续行均按<b>盲文行、列</b>定位报错（点击错误可跳转到输入位置），且不输出部分解读文本。</li>
+      </ul>
+    </section>
+  </div>
+
+  <div id="view-avoid" class="view" hidden>
+    <section class="panel input-panel">
+      <div class="panel-head">
+        <h2>① 输入正反两面原文</h2>
+        <span class="hint">两面共用同一行宽，各自独立校验与排版</span>
+      </div>
+      <div class="avoid-inputs">
+        <div class="avoid-input">
+          <div class="avoid-input-head">
+            <label for="avoFront">正面原文</label>
+            <span class="counter"><span id="avoFrontCount">0</span> / 500</span>
+          </div>
+          <textarea id="avoFront" rows="4" maxlength="500" spellcheck="false"
+            placeholder="正面原文：仅 ASCII 字母、数字、空格与换行；换行＝硬分段。"></textarea>
+        </div>
+        <div class="avoid-input">
+          <div class="avoid-input-head">
+            <label for="avoBack">反面原文</label>
+            <span class="counter"><span id="avoBackCount">0</span> / 500</span>
+          </div>
+          <textarea id="avoBack" rows="4" maxlength="500" spellcheck="false"
+            placeholder="反面原文：仅 ASCII 字母、数字、空格与换行；换行＝硬分段。"></textarea>
+        </div>
+      </div>
+
+      <div class="controls">
+        <label class="width-label">共同行宽
+          <input type="number" id="avoWidth" min="10" max="40" step="1" value="20">
+          <span class="hint">10～40 格</span>
+        </label>
+        <label class="width-label">最小点距
+          <input type="number" id="avoDist" min="0.1" max="3" step="0.1" value="1.0">
+          <span class="hint">0.1～3.0 毫米，限一位小数</span>
+        </label>
+        <div class="buttons">
+          <button type="button" id="btnAvoid" class="primary">计算避让位移（Ctrl+Enter）</button>
+          <button type="button" id="btnAvoSample">示例</button>
+          <button type="button" id="btnAvoClear">清空</button>
+        </div>
+      </div>
+
+      <div id="avoErrorBox" class="error-box" hidden></div>
+    </section>
+
+    <section class="panel result-panel" id="avoResultPanel" hidden>
+      <div class="panel-head">
+        <h2>② 避让结果与点阵叠加</h2>
+        <div class="buttons">
+          <button type="button" id="btnAvoCopy">复制结果摘要</button>
+        </div>
+      </div>
+
+      <div id="avoVerdict" class="verdict"></div>
+
+      <div class="stats" id="avoStats"></div>
+
+      <div class="legend">
+        <span class="legend-item"><i class="dot-sw dot-sw-front"></i>正面凸点</span>
+        <span class="legend-item"><i class="dot-sw dot-sw-back"></i>反面凸点（镜像＋位移后）</span>
+        <span class="legend-item"><i class="dot-sw dot-sw-conflict"></i>冲突点（红圈并连线）</span>
+      </div>
+
+      <div class="overlay-wrap">
+        <svg id="avoOverlay" role="img" aria-label="双面点阵叠加图"></svg>
+      </div>
+
+      <h3 class="conf-title">冲突点对（<span id="avoConfCount">0</span>）
+        <span class="hint">行、格为零基编号</span>
+      </h3>
+      <div id="avoConflicts" class="conf-list"></div>
+    </section>
+
+    <section class="panel rules">
+      <h2>避让规则</h2>
+      <ul>
+        <li>零基行格 (r, c)：点 1～3 坐标 (6c, 10r+2.5k)，点 4～6 坐标 (6c+2.5, 10r+2.5k)，k=0～2，单位毫米；只计凸点。</li>
+        <li>反面点 (x, y) 映射到正面坐标 (6(w−1)+2.5−x+dx, y+dy)；dx、dy 各取 −3～3 毫米、步长 0.1 毫米，遍历全部 61×61 个位移。</li>
+        <li>两面点距小于最小点距（0.1～3.0 毫米，限一位小数）记一对冲突；距离以放大 10 倍的整数平方比较。</li>
+        <li>按 <b>冲突对数 → dx²+dy² → dx → dy</b> 依次最小择优；零冲突即可行，否则说明仍有冲突。</li>
+      </ul>
+    </section>
+  </div>
+
+  <div id="view-inspect" class="view" hidden>
+    <section class="panel input-panel">
+      <div class="panel-head">
+        <h2>① 输入原文与实测凸点</h2>
+        <span class="hint">实测点整体平移后与排版理论凸点配准</span>
+      </div>
+      <div class="avoid-inputs">
+        <div class="avoid-input">
+          <div class="avoid-input-head">
+            <label for="insText">原文</label>
+            <span class="counter"><span id="insTextCount">0</span> / 100</span>
+          </div>
+          <textarea id="insText" rows="4" maxlength="100" spellcheck="false"
+            placeholder="仅可输入 ASCII 字母、数字、空格与换行；换行＝硬分段；每个词只能全为字母或全为数字。"></textarea>
+        </div>
+        <div class="avoid-input">
+          <div class="avoid-input-head">
+            <label for="insPoints">实测凸点坐标</label>
+            <span class="counter"><span id="insPointCount">0</span> / 400 行</span>
+          </div>
+          <textarea id="insPoints" rows="4" class="points-input" spellcheck="false"
+            placeholder="每行一对 “x,y”（毫米，限一位小数，可带负号），按输入顺序编号；留空表示 0 个实测点。&#10;例：&#10;2.7,4.9&#10;6.2,-0.1"></textarea>
+        </div>
+      </div>
+
+      <div class="controls">
+        <label class="width-label">每行格数
+          <input type="number" id="insWidth" min="10" max="40" step="1" value="16">
+          <span class="hint">10～40</span>
+        </label>
+        <div class="buttons">
+          <button type="button" id="btnInspect" class="primary">复核（Ctrl+Enter）</button>
+          <button type="button" id="btnInsSample">示例</button>
+          <button type="button" id="btnInsClear">清空</button>
+        </div>
+      </div>
+
+      <div id="insErrorBox" class="error-box" hidden></div>
+    </section>
+
+    <section class="panel result-panel" id="insResultPanel" hidden>
+      <div class="panel-head">
+        <h2>② 复核结果与点位叠加</h2>
+        <div class="buttons">
+          <button type="button" id="btnInsCopy">复制结果摘要</button>
+        </div>
+      </div>
+
+      <div id="insVerdict" class="verdict"></div>
+
+      <div class="stats" id="insStats"></div>
+
+      <div class="legend">
+        <span class="legend-item"><i class="dot-sw dot-sw-theory"></i>理论凸点（已配对）</span>
+        <span class="legend-item"><i class="dot-sw dot-sw-measured"></i>实测点（位移后，已配对）</span>
+        <span class="legend-item"><i class="dot-sw dot-sw-missing"></i>缺失理论点（红圈）</span>
+        <span class="legend-item"><i class="dot-sw dot-sw-extra"></i>多余实测点（红菱形）</span>
+        <span class="legend-item"><i class="line-sw"></i>配对连线</span>
+      </div>
+
+      <div class="overlay-wrap">
+        <svg id="insOverlay" role="img" aria-label="压印点位复核叠加图"></svg>
+      </div>
+
+      <h3 class="conf-title">缺失理论点（<span id="insMissCount">0</span>）
+        <span class="hint">行、格、点号为零基编号</span>
+      </h3>
+      <div id="insMissing" class="conf-list"></div>
+
+      <h3 class="conf-title">多余实测点（<span id="insExtraCount">0</span>）
+        <span class="hint">括号内为输入行号（一基）与原始坐标</span>
+      </h3>
+      <div id="insExtra" class="conf-list"></div>
+    </section>
+
+    <section class="panel rules">
+      <h2>复核规则</h2>
+      <ul>
+        <li>沿用盲文排版的理论凸点坐标：零基行格 (r, c) 中点 1～3 为 (6c, 10r+2.5k)，点 4～6 为 (6c+2.5, 10r+2.5k)，k=0～2，单位毫米。</li>
+        <li>实测点不超过 <b>400 行</b>，每行一对 <b>x,y</b>（毫米，限一位小数）；实测点整体平移 dx、dy（各 −3～3 毫米、步长 0.1 毫米），遍历全部 61×61 个位移。</li>
+        <li>位移后实测点与理论点距离不超过 <b>0.4 毫米</b>才可配对，且双方均<b>一对一</b>：同一理论点有多个候选时取最近者，同距取输入顺序较早者。</li>
+        <li>按 <b>匹配点数最多 → 距离平方和最小 → dx²+dy² 最小 → dx 最小 → dy 最小</b> 依次择优。</li>
+        <li>结果给出位移、<b>缺失理论点</b>的零基行/格/点号与<b>多余实测点</b>的输入行号；叠加图中以红圈、红菱形标出异常。</li>
+      </ul>
+    </section>
+  </div>
+</main>
+
+<footer class="site-footer">Python · FastAPI · 原生 HTML/CSS/JavaScript — 本地离线应用</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
