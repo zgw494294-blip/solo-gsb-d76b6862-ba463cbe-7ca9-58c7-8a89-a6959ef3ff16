@@ -5,7 +5,7 @@ const $ = (sel) => document.querySelector(sel);
 
 /* ---------------- 视图切换 ---------------- */
 
-const VIEW_IDS = ["typeset", "decode", "avoid", "inspect"];
+const VIEW_IDS = ["typeset", "decode", "avoid", "inspect", "emboss"];
 
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -1088,3 +1088,255 @@ for (const input of [ins.text, ins.points]) {
 }
 
 updateInsCounts();
+
+/* ---------------- 单针压印路径视图 ---------------- */
+
+const emb = {
+  text: $("#embText"),
+  width: $("#embWidth"),
+  count: $("#embCount"),
+  btn: $("#btnEmboss"),
+  btnSample: $("#btnEmbSample"),
+  btnClear: $("#btnEmbClear"),
+  errors: $("#embErrorBox"),
+  panel: $("#embResultPanel"),
+  verdict: $("#embVerdict"),
+  stats: $("#embStats"),
+  overlay: $("#embOverlay"),
+  dirs: $("#embDirs"),
+  commands: $("#embCommands"),
+  download: $("#btnEmbDownload"),
+  copy: $("#btnEmbCopy"),
+};
+
+let lastEmboss = null;
+const EMB_LABEL_MAX = 60; // 不超过该点数时在图上标注压印顺序号
+
+function updateEmbCount() {
+  const n = emb.text.value.length;
+  emb.count.textContent = String(n);
+  emb.count.parentElement.classList.toggle("over", n > 500);
+}
+
+emb.text.addEventListener("input", updateEmbCount);
+
+async function doEmboss() {
+  const text = emb.text.value;
+  const width = Number(emb.width.value);
+
+  // 前端即时校验（最终以服务端为准）
+  const local = [];
+  if (!/^[\x20\nA-Za-z0-9]*$/.test(text)) {
+    local.push("含非法字符：仅允许 ASCII 字母、数字、空格与换行。");
+  }
+  if (text.length > 500) local.push("输入超过 500 个字符。");
+  if (!/[A-Za-z0-9]/.test(text)) local.push("至少需要包含一个字母或数字。");
+  if (!Number.isInteger(width) || width < 10 || width > 40) {
+    local.push("每行格数须为 10～40 的整数。");
+  }
+  if (local.length) {
+    showErrors(emb.errors, emb.panel, emb.text, [{ message: local.join("\n") }]);
+    return;
+  }
+
+  emb.btn.disabled = true;
+  try {
+    const resp = await fetch("/api/emboss-path", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, width }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.ok === false) {
+      showErrors(emb.errors, emb.panel, emb.text,
+        data.errors || [{ message: "路径规划失败。" }]);
+      return;
+    }
+    emb.errors.hidden = true;
+    renderEmboss(data);
+  } catch (e) {
+    showErrors(emb.errors, emb.panel, emb.text, [{ message: "请求失败：" + e }]);
+  } finally {
+    emb.btn.disabled = false;
+  }
+}
+
+/* ---------------- 路径图渲染 ---------------- */
+
+function renderEmbOverlay(r) {
+  const rows = Math.max(r.layout.lines.length, 1);
+  const spanX = 6 * (r.width - 1) + 2.5;   // 点阵横向跨度（毫米）
+  const spanY = (rows - 1) * 10 + 5;       // 点阵纵向跨度（毫米）
+  const pad = 4;                           // 留白，容纳原点与路径端
+  const X = (v) => (v + pad) * MM;
+  const Y = (v) => (v + pad) * MM;
+
+  const svg = emb.overlay;
+  svg.innerHTML = `
+    <defs>
+      <marker id="embArrowSweep" viewBox="0 0 10 10" refX="8" refY="5"
+        markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 Z" fill="#8a5a24"></path>
+      </marker>
+      <marker id="embArrowMove" viewBox="0 0 10 10" refX="8" refY="5"
+        markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 Z" fill="#2f6fb2"></path>
+      </marker>
+    </defs>`;
+  svg.setAttribute("width", (spanX + 2 * pad) * MM);
+  svg.setAttribute("height", (spanY + 2 * pad) * MM);
+
+  // 行格参考线（每格 6×10 毫米）
+  const grid = svgEl("g", { class: "emb-grid" });
+  for (let rr = 0; rr < rows; rr++) {
+    for (let c = 0; c < r.width; c++) {
+      grid.appendChild(svgEl("rect", {
+        x: X(6 * c - 1.75), y: Y(10 * rr - 2.5),
+        width: 6 * MM, height: 10 * MM,
+      }));
+    }
+  }
+  svg.appendChild(grid);
+
+  // 压头轨迹：由扫描线明细重放。每个凸点前都是一次抬针 MOVE（蓝虚线）；
+  // 同一扫描线内相邻两个落针点之间的行程为扫描线落针行程（棕实线），
+  // 末端的箭头给出实际走行方向；最后从末点抬针 MOVE 回原点。
+  const flat = r.scanlines.flatMap((s) => s.points);
+  const links = svgEl("g", {});
+  let cursor = { x: 0, y: 0 };
+  const sweeps = []; // [from, to] 扫描线内行程（毫米）
+  const moves = [];  // [from, to] 抬针移动（毫米）
+  for (const s of r.scanlines) {
+    for (const p of s.points) {
+      moves.push([cursor, { x: p.x, y: s.y }]);
+      cursor = { x: p.x, y: s.y };
+    }
+    for (let i = 1; i < s.points.length; i++) {
+      sweeps.push([{ x: s.points[i - 1].x, y: s.y }, { x: s.points[i].x, y: s.y }]);
+    }
+  }
+  moves.push([cursor, { x: 0, y: 0 }]);
+
+  for (const [a, b] of moves) {
+    links.appendChild(svgEl("line", {
+      class: "emb-move",
+      x1: X(a.x), y1: Y(a.y), x2: X(b.x), y2: Y(b.y),
+      "marker-end": "url(#embArrowMove)",
+    }));
+  }
+  for (const [a, b] of sweeps) {
+    links.appendChild(svgEl("line", {
+      class: "emb-sweep",
+      x1: X(a.x), y1: Y(a.y), x2: X(b.x), y2: Y(b.y),
+      "marker-end": "url(#embArrowSweep)",
+    }));
+  }
+  svg.appendChild(links);
+
+  // 理论凸点（附压印顺序）
+  const dotsG = svgEl("g", { class: r.punch_count > EMB_LABEL_MAX ? "emb-dim" : "" });
+  const labeled = r.punch_count <= EMB_LABEL_MAX;
+  for (const p of flat) {
+    const g = svgEl("g", {});
+    g.appendChild(withTitle(
+      svgEl("circle", { class: "emb-dot", cx: X(p.x), cy: Y(p.y), r: DOT_R * MM }),
+      `第 ${p.order} 针：行${p.row}·格${p.cell}·点${p.dot}（${p.x.toFixed(1)}, ${p.y.toFixed(1)} 毫米）`,
+    ));
+    if (labeled) {
+      const t = svgEl("text", { x: X(p.x), y: Y(p.y), class: "emb-order" });
+      t.textContent = String(p.order);
+      g.appendChild(t);
+    }
+    dotsG.appendChild(g);
+  }
+  svg.appendChild(dotsG);
+
+  // 原点
+  svg.appendChild(withTitle(
+    svgEl("circle", { class: "emb-origin", cx: X(0), cy: Y(0), r: 1.1 * MM }),
+    "压头原点 (0,0)",
+  ));
+}
+
+function renderEmboss(r) {
+  lastEmboss = r;
+  emb.panel.hidden = false;
+
+  emb.verdict.textContent =
+    `✓ 路径规划完成：${r.scanline_count} 条扫描线、${r.punch_count} 针，` +
+    `方向序列 [${r.directions.join(",")}]，总移动距离 ${r.total_distance.toFixed(1)} 毫米。`;
+
+  emb.stats.innerHTML = [
+    `行宽：<b>${r.width}</b> 格`,
+    `凸点（压针次数）：<b>${r.punch_count}</b>`,
+    `扫描线：<b>${r.scanline_count}</b> 条`,
+    `方向序列：<b>[${r.directions.join(",")}]</b>（0 递增 / 1 递减）`,
+    `总移动距离：<b>${r.total_distance.toFixed(1)}</b> 毫米（曼哈顿）`,
+  ].map((s) => `<span>${s}</span>`).join("");
+
+  emb.dirs.innerHTML = "";
+  r.scanlines.forEach((s, i) => {
+    const span = document.createElement("span");
+    span.className = "emb-dir d" + s.direction;
+    span.textContent = String(r.directions[i]);
+    span.title =
+      `第 ${i + 1} 条扫描线：y=${s.y.toFixed(1)} 毫米，` +
+      `${s.direction === 0 ? "x 递增" : "x 递减"}，${s.points.length} 针`;
+    emb.dirs.appendChild(span);
+  });
+
+  emb.commands.textContent = r.command_text;
+
+  renderEmbOverlay(r);
+  emb.panel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/* ---------------- 下载与复制 ---------------- */
+
+function downloadEmboss() {
+  if (!lastEmboss) return;
+  // 指令仅含 ASCII（UP / MOVE x,y / PUNCH），无需 BOM
+  const blob = new Blob([lastEmboss.command_text + "\n"], {
+    type: "text/plain;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "emboss-path.txt";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+emb.btn.addEventListener("click", doEmboss);
+emb.download.addEventListener("click", downloadEmboss);
+emb.copy.addEventListener("click", () => {
+  if (lastEmboss) copyText(emb.copy, lastEmboss.command_text);
+});
+
+emb.btnClear.addEventListener("click", () => {
+  emb.text.value = "";
+  updateEmbCount();
+  emb.errors.hidden = true;
+  emb.panel.hidden = true;
+  emb.text.focus();
+});
+
+emb.btnSample.addEventListener("click", () => {
+  emb.text.value =
+`Hello Braille
+2026`;
+  emb.width.value = 16;
+  updateEmbCount();
+  doEmboss();
+});
+
+emb.text.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    doEmboss();
+  }
+});
+
+updateEmbCount();

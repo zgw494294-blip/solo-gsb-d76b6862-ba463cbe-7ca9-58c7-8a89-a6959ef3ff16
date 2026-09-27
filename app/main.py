@@ -10,10 +10,11 @@ from pydantic import BaseModel, Field
 
 from .avoid import avoid
 from .braille import ValidationError, typeset
+from .emboss import emboss_path
 from .inspect import inspect
 from .reader import decode
 
-app = FastAPI(title="六点盲文排版台", version="1.3.0")
+app = FastAPI(title="六点盲文排版台", version="1.4.0")
 
 
 class TypesetIn(BaseModel):
@@ -45,6 +46,13 @@ class InspectIn(BaseModel):
     text: str = Field(..., description="原文：ASCII 字母、数字、空格与换行，不超过 100 字符")
     width: int = Field(..., description="每行 10～40 格")
     points: str = Field(..., description="实测凸点：0～400 行，每行 “x,y”（毫米，限一位小数）")
+
+
+class EmbossIn(BaseModel):
+    # 原文与行宽完全复用 braille.validate / typeset 的校验与排版口径；
+    # 这里仅约束基本类型。
+    text: str = Field(..., description="ASCII 字母、数字、空格与换行，不超过 500 字符")
+    width: int = Field(..., description="每行 10～40 格")
 
 
 @app.exception_handler(RequestValidationError)
@@ -94,6 +102,16 @@ def api_avoid(payload: AvoidIn):
 def api_inspect(payload: InspectIn):
     try:
         result = inspect(payload.text, payload.width, payload.points)
+    except ValidationError as exc:
+        return JSONResponse(status_code=422, content={"ok": False, "errors": exc.errors})
+    result["ok"] = True
+    return result
+
+
+@app.post("/api/emboss-path")
+def api_emboss_path(payload: EmbossIn):
+    try:
+        result = emboss_path(payload.text, payload.width)
     except ValidationError as exc:
         return JSONResponse(status_code=422, content={"ok": False, "errors": exc.errors})
     result["ok"] = True

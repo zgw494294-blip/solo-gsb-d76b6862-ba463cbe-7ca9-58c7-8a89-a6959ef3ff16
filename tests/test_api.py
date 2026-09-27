@@ -286,3 +286,65 @@ def test_inspect_missing_field():
     resp = client.post("/api/inspect", json={"text": "a", "width": 10})
     assert resp.status_code == 422
     assert resp.json()["ok"] is False
+
+
+def test_emboss_path_ok():
+    resp = client.post("/api/emboss-path", json={"text": "ab", "width": 10})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["directions"] == [0, 0]
+    assert data["total_distance"] == 17.0
+    assert data["punch_count"] == 3
+    assert data["scanline_count"] == 2
+    assert data["layout"]["braille_text"] == "⠁⠃"
+
+    ops = [(c["op"],) for c in data["commands"]]
+    assert ops[0] == ("UP",)
+    assert ops[-1] == ("MOVE",)
+    # 每个凸点恰好一条 PUNCH，PUNCH 前必有 MOVE
+    assert sum(1 for c in data["commands"] if c["op"] == "PUNCH") == 3
+    for i, c in enumerate(data["commands"]):
+        if c["op"] == "PUNCH":
+            assert data["commands"][i - 1]["op"] == "MOVE"
+            assert c["order"] == sum(
+                1
+                for p in data["commands"][: i + 1]
+                if p["op"] == "PUNCH"
+            )
+    # 末条 MOVE 回原点
+    assert data["commands"][-1] == {"op": "MOVE", "x": 0.0, "y": 0.0}
+    # 指令文本与指令列表同长（UP/MOVE/PUNCH 各占一行）
+    assert len(data["command_text"].splitlines()) == len(data["commands"])
+
+
+def test_emboss_path_single_dot_zero_distance():
+    resp = client.post("/api/emboss-path", json={"text": "a", "width": 10})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["directions"] == [0]
+    assert data["total_distance"] == 0.0
+    assert data["scanlines"][0]["points"][0] == {
+        "x": 0.0, "row": 0, "cell": 0, "dot": 1, "order": 1,
+    }
+
+
+def test_emboss_path_invalid_text_located():
+    resp = client.post("/api/emboss-path", json={"text": "ab\tc", "width": 10})
+    assert resp.status_code == 422
+    data = resp.json()
+    assert data["ok"] is False
+    err = next(e for e in data["errors"] if e["code"] == "illegal_char")
+    assert (err["line"], err["col"]) == (1, 3)
+
+
+def test_emboss_path_bad_width():
+    resp = client.post("/api/emboss-path", json={"text": "a", "width": 9})
+    assert resp.status_code == 422
+    assert resp.json()["errors"][0]["code"] == "bad_width"
+
+
+def test_emboss_path_missing_field():
+    resp = client.post("/api/emboss-path", json={"text": "a"})
+    assert resp.status_code == 422
+    assert resp.json()["ok"] is False

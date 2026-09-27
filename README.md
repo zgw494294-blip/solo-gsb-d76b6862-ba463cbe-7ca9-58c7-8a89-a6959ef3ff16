@@ -1,6 +1,7 @@
 # 六点盲文排版台
 
-本地运行的英语一级（Grade 1）六点盲文转写排版与识读 Web 应用。
+本地运行的英语一级（Grade 1）六点盲文转写排版与识读 Web 应用，
+另含双面点阵避让、压印点位复核与单针压印路径规划。
 Python / FastAPI 后端 + 原生 HTML/CSS/JavaScript 前端，**无需外网、无前端构建步骤**。
 
 ## 一条命令启动
@@ -102,6 +103,22 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
   及原始坐标、全部配对（含间距）、距离平方和与完整排版结果；
   页面叠加图中以红圈标出缺失理论点、红菱形标出多余实测点，列表点击可定位到对应输入行。
 
+### 单针压印路径（理论凸点 → 扫描线指令）
+
+- **入口**：页面顶部「单针压印路径」标签，或 `POST /api/emboss-path`。
+- **输入**：合法原文与行宽（10～40 格），**完全复用**盲文排版的全部校验、动态规划排版
+  与理论凸点坐标（零基行格，只计凸点；原文沿用 500 字符上限）。
+- **扫描线**：把全部凸点按 **y 升序**分为扫描线（同一 y 的点为一条）；每条扫描线的 x
+  只能**单调递增（方向 0）或单调递减（方向 1）**，扫描线按 y 升序执行，每个凸点恰好压一次。
+- **择优**：压头从 **(0,0)** 出发并返回原点，全部移动按**曼哈顿距离**计长；
+  以每条扫描线两个方向为状态做动态规划，选总距离最短的方向序列，
+  同距取方向序列（递增 0 / 递减 1）**字典序最小**者（如单点扫描线恒取 0）。
+- **指令**：先 `UP` 抬针；随后对每个凸点先 `MOVE x,y`（MOVE 前必为抬针状态）再 `PUNCH`
+  （PUNCH 仅在理论凸点落针，完成后自动复位抬针）；最后 `MOVE 0.0,0.0` 返回原点。
+- **结果**：返回方向序列 `directions`、总曼哈顿距离 `total_distance`（毫米）、
+  结构化指令 `commands`（PUNCH 含压印顺序与零基行/格/点号）与可下载的指令文本 `command_text`；
+  页面以箭头路径图展示扫描线内落针行程与抬针移动、标注压印顺序与总距离，并可**下载指令 `.txt`**。
+
 ## API
 
 | 方法 | 路径 | 说明 |
@@ -110,6 +127,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 | `POST` | `/api/decode` | 请求体 `{"text": "..."}`（Unicode 六点盲文，≤500 格），返回 `{"text": ...}` 识读结果；输入非法时 HTTP 422，`errors` 含盲文行/列定位，不返回部分结果 |
 | `POST` | `/api/avoid` | 请求体 `{"front": "...", "back": "...", "width": 20, "min_distance": 1.0}`，返回最优位移 `dx`/`dy`、`feasible` 与全部冲突点对（两端含面/行/格/点号，零基）及两面排版结果；输入非法时 HTTP 422，原文错误带 `face` 区分正反面 |
 | `POST` | `/api/inspect` | 请求体 `{"text": "...", "width": 20, "points": "0.1,0.2\n2.6,-0.1"}`（原文 ≤100 字符，实测点 0～400 行、每行一对一位小数坐标），返回最优 `dx`/`dy`、`matched`/`missing`/`extra` 计数、`missing_dots`（零基行/格/点号）、`extra_points`（输入行号与原始坐标）、`matches`（含间距与输入行号）、距离平方和 `sse` 与排版结果 `layout`；输入非法时 HTTP 422，错误带 `field`（`text`/`points`）与行、列定位 |
+| `POST` | `/api/emboss-path` | 请求体 `{"text": "...", "width": 20}`（合法原文 ≤500 字符、行宽 10～40，复用排版校验与理论凸点坐标），返回 `directions`（每条扫描线 0 递增 / 1 递减）、`total_distance`（总曼哈顿移动距离，毫米）、`punch_count`/`scanline_count`、`commands`（自原点起：`UP`、逐点 `MOVE x,y`＋`PUNCH`、回原点的 `MOVE 0.0,0.0`；PUNCH 含顺序号与零基行/格/点号）、`command_text`（可下载的指令文本）、`scanlines`（每线 y、方向、落针点 x 与行/格/点号、顺序号）与排版结果 `layout`；输入非法时 HTTP 422，`errors` 含行/列定位 |
 | `GET` | `/api/health` | 健康检查 |
 
 例：
@@ -130,6 +148,10 @@ curl -s -X POST http://localhost:8000/api/avoid \
 curl -s -X POST http://localhost:8000/api/inspect \
   -H 'Content-Type: application/json' \
   -d '{"text":"Hello 2026","width":16,"points":"0.1,0.2\n6.1,-0.1\n6.1,2.4"}'
+
+curl -s -X POST http://localhost:8000/api/emboss-path \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"q","width":10}'
 ```
 
 ## 离线说明
@@ -149,8 +171,9 @@ curl -s -X POST http://localhost:8000/api/inspect \
 │   ├── reader.py          # 盲文识读引擎（Unicode 盲文 → ASCII）
 │   ├── avoid.py           # 双面点阵避让引擎（位移搜索与冲突枚举）
 │   ├── inspect.py         # 压印点位复核引擎（平移配准、缺失/多余枚举）
+│   ├── emboss.py          # 单针压印路径引擎（扫描线方向 DP、UP/MOVE/PUNCH 指令）
 │   └── static
-│       ├── index.html     # 页面结构（排版 / 识读 / 双面避让 / 压印复核四个视图）
+│       ├── index.html     # 页面结构（排版 / 识读 / 双面避让 / 压印复核 / 单针压印路径五个视图）
 │       ├── style.css      # 样式（盲文格六点矩阵、点阵叠加图）
 │       └── app.js         # 前端交互（原生 JS）
 ├── tests
@@ -158,6 +181,7 @@ curl -s -X POST http://localhost:8000/api/inspect \
 │   ├── test_reader.py     # 识读引擎测试（含排版→识读往返对照）
 │   ├── test_avoid.py      # 避让引擎测试（含与朴素枚举的随机对照）
 │   ├── test_inspect.py    # 复核引擎测试（含与朴素贪心枚举的随机对照）
+│   ├── test_emboss.py     # 压印路径引擎测试（含与 2^L 全枚举的随机对照）
 │   └── test_api.py        # 接口层测试
 ├── Dockerfile
 ├── docker-compose.yml
@@ -174,5 +198,8 @@ python3 -m pytest tests/ -q
 
 测试覆盖转写规则、识读规则、报错定位、超宽词断行、数字续行标记、各优化目标优先级、
 排版→识读往返一致性、双面避让的坐标映射/位移择优/冲突枚举与参数校验，
-以及压印复核的坐标解析/错误定位/贪心配对/五级位移择优与缺失多余枚举，
-并以独立实现为基准做随机对照（排版对照记忆化 DP，避让与复核对照朴素逐位移枚举）。
+压印复核的坐标解析/错误定位/贪心配对/五级位移择优与缺失多余枚举，
+以及单针压印路径的扫描线分组、两状态 DP 择优与字典序同分裁决、
+UP/MOVE/PUNCH 指令语义（抬针前置、每点一针、返回原点），
+并以独立实现为基准做随机对照（排版对照记忆化 DP，避让与复核对照朴素逐位移枚举，
+压印路径对照 2^L 方向序列全枚举）。

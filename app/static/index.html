@@ -9,7 +9,7 @@
 <body>
 <header class="site-header">
   <h1>六点盲文排版台</h1>
-  <p class="subtitle">英语一级（Grade 1）六点盲文 · 转写排版 ↔ 识读还原 · 双面点阵避让 · 压印点位复核 · 完全离线运行</p>
+  <p class="subtitle">英语一级（Grade 1）六点盲文 · 转写排版 ↔ 识读还原 · 双面点阵避让 · 压印点位复核 · 单针压印路径 · 完全离线运行</p>
 </header>
 
 <main>
@@ -18,6 +18,7 @@
     <button type="button" class="tab" data-view="decode">盲文识读</button>
     <button type="button" class="tab" data-view="avoid">双面避让</button>
     <button type="button" class="tab" data-view="inspect">压印复核</button>
+    <button type="button" class="tab" data-view="emboss">单针压印路径</button>
   </nav>
 
   <div id="view-typeset" class="view">
@@ -288,6 +289,74 @@
         <li>位移后实测点与理论点距离不超过 <b>0.4 毫米</b>才可配对，且双方均<b>一对一</b>：同一理论点有多个候选时取最近者，同距取输入顺序较早者。</li>
         <li>按 <b>匹配点数最多 → 距离平方和最小 → dx²+dy² 最小 → dx 最小 → dy 最小</b> 依次择优。</li>
         <li>结果给出位移、<b>缺失理论点</b>的零基行/格/点号与<b>多余实测点</b>的输入行号；叠加图中以红圈、红菱形标出异常。</li>
+      </ul>
+    </section>
+  </div>
+
+  <div id="view-emboss" class="view" hidden>
+    <section class="panel input-panel">
+      <div class="panel-head">
+        <h2>① 输入原文</h2>
+        <span class="counter"><span id="embCount">0</span> / 500</span>
+      </div>
+      <textarea id="embText" rows="6" maxlength="500" spellcheck="false"
+        placeholder="仅可输入 ASCII 字母、数字、空格与换行；换行＝硬分段；连续空格合并为一个词间格；每个词只能全为字母或全为数字。"></textarea>
+
+      <div class="controls">
+        <label class="width-label">每行格数
+          <input type="number" id="embWidth" min="10" max="40" step="1" value="16">
+          <span class="hint">10～40</span>
+        </label>
+        <div class="buttons">
+          <button type="button" id="btnEmboss" class="primary">规划压印路径（Ctrl+Enter）</button>
+          <button type="button" id="btnEmbSample">示例</button>
+          <button type="button" id="btnEmbClear">清空</button>
+        </div>
+      </div>
+
+      <div id="embErrorBox" class="error-box" hidden></div>
+    </section>
+
+    <section class="panel result-panel" id="embResultPanel" hidden>
+      <div class="panel-head">
+        <h2>② 单针压印路径与执行指令</h2>
+        <div class="buttons">
+          <button type="button" id="btnEmbDownload">下载指令文本 (.txt)</button>
+          <button type="button" id="btnEmbCopy">复制指令文本</button>
+        </div>
+      </div>
+
+      <div id="embVerdict" class="verdict ok"></div>
+
+      <div class="stats" id="embStats"></div>
+
+      <div class="legend">
+        <span class="legend-item"><i class="dot-sw dot-sw-front"></i>理论凸点（编号为压印顺序）</span>
+        <span class="legend-item"><i class="line-sw emb-sweep-sw"></i>扫描线内落针行程</span>
+        <span class="legend-item"><i class="line-sw emb-move-sw"></i>抬针移动（MOVE）</span>
+        <span class="legend-item"><i class="emb-origin-sw"></i>原点 (0,0)</span>
+      </div>
+
+      <div class="overlay-wrap">
+        <svg id="embOverlay" role="img" aria-label="单针压印路径图"></svg>
+      </div>
+
+      <h3 class="conf-title">扫描线方向序列
+        <span class="hint">按 y 升序；0＝x 递增，1＝x 递减</span>
+      </h3>
+      <div id="embDirs" class="emb-dirs"></div>
+
+      <h3 class="conf-title">执行指令（UP / MOVE / PUNCH）</h3>
+      <pre id="embCommands" class="decode-output emb-cmd"></pre>
+    </section>
+
+    <section class="panel rules">
+      <h2>路径规则</h2>
+      <ul>
+        <li>复用盲文排版的理论凸点坐标：零基行格 (r, c) 中点 1～3 为 (6c, 10r+2.5k)，点 4～6 为 (6c+2.5, 10r+2.5k)，k=0～2，单位毫米，只计凸点。</li>
+        <li>凸点按 <b>y 升序</b>分为扫描线；每条扫描线的 x 只能<b>单调递增（方向 0）或单调递减（方向 1）</b>，每个凸点恰好压一次。</li>
+        <li>压头从 <b>(0,0)</b> 出发并返回原点，全部移动按<b>曼哈顿距离</b>计长，选择总距离最短的扫描线方向序列；同距取方向序列<b>字典序最小</b>者。</li>
+        <li><b>MOVE 前须抬针（UP）</b>：指令先 UP，随后对每个凸点 MOVE 到该点再 PUNCH（PUNCH 仅在理论凸点落针并自动复位抬针），最后 MOVE 回 (0,0)。</li>
       </ul>
     </section>
   </div>

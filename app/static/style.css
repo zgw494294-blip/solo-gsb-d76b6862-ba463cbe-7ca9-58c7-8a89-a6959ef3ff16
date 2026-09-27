@@ -487,6 +487,62 @@ textarea.points-input {
   .avoid-inputs { grid-template-columns: 1fr; }
 }
 
+/* 单针压印路径视图 */
+#embOverlay { display: block; }
+.emb-grid rect { fill: none; stroke: #ece4d2; stroke-width: 1; }
+.emb-sweep { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+.emb-move {
+  stroke: #2f6fb2;
+  stroke-width: 1.1;
+  stroke-dasharray: 5 3;
+  fill: none;
+  stroke-opacity: .8;
+}
+.emb-dot { fill: var(--dot-on); }
+.emb-origin { fill: none; stroke: var(--error-border); stroke-width: 2; }
+.emb-order {
+  font: 9px/1 ui-monospace, Consolas, monospace;
+  fill: #fff8ec;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+.emb-dim .emb-order { fill: var(--muted); }
+
+.emb-sweep-sw { border-top: 2px solid var(--accent) !important; }
+.emb-move-sw { border-top: 2px dashed #2f6fb2 !important; }
+.emb-origin-sw {
+  width: 10px; height: 10px;
+  border: 2px solid var(--error-border);
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.emb-dirs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font: 13px ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.emb-dir {
+  min-width: 24px;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fffefa;
+  text-align: center;
+}
+.emb-dir.d0 { color: var(--accent-dark); border-color: #d8b378; }
+.emb-dir.d1 { color: #2f6fb2; border-color: #8db4cf; }
+
+.emb-cmd {
+  max-height: 320px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 0;
+}
+
 .site-footer {
   text-align: center;
   color: var(--muted);
